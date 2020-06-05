@@ -263,6 +263,8 @@ void KirigamiPlugin::registerTypes(const char *uri)
     qmlRegisterType(componentUrl(QStringLiteral("Avatar.qml")), uri, 2, 13, "Avatar");
     qmlRegisterType(componentUrl(QStringLiteral("swipenavigator/SwipeNavigator.qml")), uri, 2, 13, "SwipeNavigator");
 
+    qmlRegisterType(componentUrl(QStringLiteral("Hero.qml")), uri, 2, 14, "Hero");
+
     qmlProtectModule(uri, 2);
 }
 
