@@ -245,6 +245,7 @@ QQC2.Page {
     property Component titleDelegate: Kirigami.Heading {
         id: title
         level: 1
+        leftPadding: Kirigami.Units.largeSpacing
         Layout.fillWidth: true
         Layout.maximumWidth: implicitWidth + 1 // The +1 is to make sure we do not trigger eliding at max width
         Layout.minimumWidth: 0
