@@ -15,18 +15,23 @@
 ParsedRoute parseRoute(QJSValue value)
 {
     if (value.isUndefined()) {
-        return ParsedRoute{QString(), QVariant(), false, nullptr};
+        return ParsedRoute{QString(), QVariant(), QVariantMap(), false, nullptr};
     } else if (value.isString()) {
         return ParsedRoute{
             value.toString(),
             QVariant(),
+            QVariantMap(),
             false,
             nullptr
         };
     } else {
+        auto map = value.toVariant().value<QVariantMap>();
+        map.remove(QStringLiteral("route"));
+        map.remove(QStringLiteral("data"));
         return ParsedRoute{
             value.property(QStringLiteral("route")).toString(),
             value.property(QStringLiteral("data")).toVariant(),
+            map,
             false,
             nullptr
         };
@@ -42,14 +47,19 @@ QList<ParsedRoute> parseRoutes(QJSValue values)
                 ret << ParsedRoute{
                     route.toString(),
                     QVariant(),
+                    QVariantMap(),
                     false,
                     nullptr
                 };
             } else if (route.canConvert<QVariantMap>()) {
                 auto map = route.value<QVariantMap>();
+                auto copy = map;
+                copy.remove(QStringLiteral("route"));
+                copy.remove(QStringLiteral("data"));
                 ret << ParsedRoute{
                     map.value(QStringLiteral("route")).toString(),
                     map.value(QStringLiteral("data")),
+                    copy,
                     false,
                     nullptr
                 };
@@ -162,6 +172,12 @@ void PageRouter::push(ParsedRoute route)
         for (auto cachedRoute : m_cachedRoutes) {
             if (cachedRoute.name == route.name && cachedRoute.data == route.data) {
                 m_currentRoutes << cachedRoute;
+                for ( auto it = cachedRoute.properties.begin(); it != cachedRoute.properties.end(); it++ ) {
+                    cachedRoute.item->setProperty(qUtf8Printable(it.key()), QVariant());
+                }
+                for ( auto it = route.properties.begin(); it != cachedRoute.properties.end(); it++ ) {
+                    cachedRoute.item->setProperty(qUtf8Printable(it.key()), QVariant());
+                }
                 m_pageStack->addItem(qobject_cast<QQuickItem*>(cachedRoute.item));
                 return;
             }
@@ -175,6 +191,9 @@ void PageRouter::push(ParsedRoute route)
         // on construction time.
         auto item = component->beginCreate(context);
         item->setParent(this);
+        for ( auto it = route.properties.begin(); it != route.properties.end(); it++ ) {
+            item->setProperty(qUtf8Printable(it.key()), it.value());
+        }
         auto clone = route;
         clone.item = item;
         clone.cache = routesCacheForKey(route.name);
@@ -500,6 +519,15 @@ void PageRouterAttached::pushFromHere(QJSValue route)
     }
 }
 
+void PageRouterAttached::replaceFromHere(QJSValue route)
+{
+    if (m_router) {
+        m_router->pushFromObject(parent(), route, true);
+    } else {
+        qCritical() << "PageRouterAttached does not have a parent PageRouter";
+    }
+}
+
 void PageRouterAttached::popFromHere()
 {
     if (m_router) {
@@ -509,7 +537,7 @@ void PageRouterAttached::popFromHere()
     }
 }
 
-void PageRouter::pushFromObject(QObject *object, QJSValue inputRoute)
+void PageRouter::pushFromObject(QObject *object, QJSValue inputRoute, bool replace)
 {
     auto parsed = parseRoutes(inputRoute);
     auto objects = flatParentTree(object);
@@ -526,6 +554,10 @@ void PageRouter::pushFromObject(QObject *object, QJSValue inputRoute)
             }
             if (route.item == obj) {
                 m_pageStack->pop(qobject_cast<QQuickItem*>(route.item));
+                if (replace) {
+                    m_currentRoutes.removeAll(route);
+                    m_pageStack->removeItem(qobject_cast<QQuickItem*>(route.item));
+                }
                 popping = true;
             }
         }
