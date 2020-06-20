@@ -12,19 +12,19 @@
 #include <QQuickWindow>
 #include "pagerouter.h"
 
-ParsedRoute parseRoute(QJSValue value)
+ParsedRoute* parseRoute(QJSValue value)
 {
     if (value.isUndefined()) {
-        return ParsedRoute{QString(), QVariant(), false, nullptr};
+        return new ParsedRoute{QString(), QVariant(), false, nullptr};
     } else if (value.isString()) {
-        return ParsedRoute{
+        return new ParsedRoute{
             value.toString(),
             QVariant(),
             false,
             nullptr
         };
     } else {
-        return ParsedRoute{
+        return new ParsedRoute{
             value.property(QStringLiteral("route")).toString(),
             value.property(QStringLiteral("data")).toVariant(),
             false,
@@ -33,13 +33,13 @@ ParsedRoute parseRoute(QJSValue value)
     }
 }
 
-QList<ParsedRoute> parseRoutes(QJSValue values)
+QList<ParsedRoute*> parseRoutes(QJSValue values)
 {
-    QList<ParsedRoute> ret;
+    QList<ParsedRoute*> ret;
     if (values.isArray()) {
         for (auto route : values.toVariant().toList()) {
             if (route.toString() != QString()) {
-                ret << ParsedRoute{
+                ret << new ParsedRoute{
                     route.toString(),
                     QVariant(),
                     false,
@@ -47,7 +47,7 @@ QList<ParsedRoute> parseRoutes(QJSValue values)
                 };
             } else if (route.canConvert<QVariantMap>()) {
                 auto map = route.value<QVariantMap>();
-                ret << ParsedRoute{
+                ret << new ParsedRoute{
                     map.value(QStringLiteral("route")).toString(),
                     map.value(QStringLiteral("data")),
                     false,
@@ -61,16 +61,15 @@ QList<ParsedRoute> parseRoutes(QJSValue values)
     return ret;
 }
 
-PageRouter::PageRouter(QQuickItem *parent) : QObject(parent)
+PageRouter::PageRouter(QQuickItem *parent) : QObject(parent), m_cache()
 {
     connect(this, &PageRouter::pageStackChanged, [=]() {
         connect(m_pageStack, &ColumnView::itemRemoved, [=](QQuickItem *item) {
-            QList<ParsedRoute> toRemove;
+            QList<ParsedRoute*> toRemove;
             for (auto route : m_currentRoutes) {
-                if (route.item == qobject_cast<QObject*>(item)) {
-                    if (!route.cache) {
-                        route.item->deleteLater();
-                    }
+                if (route->item == qobject_cast<QObject*>(item)) {
+                    placeInCache(route);
+                    m_currentRoutes.removeAll(route);
                 }
             }
             for (auto route : toRemove) {
@@ -152,40 +151,47 @@ bool PageRouter::routesCacheForKey(const QString &key)
     return false;
 }
 
-void PageRouter::push(ParsedRoute route)
+int PageRouter::routesCostForKey(const QString &key)
 {
-    if (!routesContainsKey(route.name)) {
-        qCritical() << "Route" << route.name << "not defined";
+    for (auto route : m_routes) {
+        if (route->name() == key) return route->cache();
+    }
+    return 1;
+}
+
+void PageRouter::push(ParsedRoute* route)
+{
+    Q_ASSERT(route);
+    if (!routesContainsKey(route->name)) {
+        qCritical() << "Route" << route->name << "not defined";
         return;
     }
-    if (routesCacheForKey(route.name)) {
-        for (auto cachedRoute : m_cachedRoutes) {
-            if (cachedRoute.name == route.name && cachedRoute.data == route.data) {
-                m_currentRoutes << cachedRoute;
-                m_pageStack->addItem(qobject_cast<QQuickItem*>(cachedRoute.item));
-                return;
-            }
+    if (routesCacheForKey(route->name)) {
+        auto item = m_cache.take(qMakePair(route->name, route->hash()));
+        if (item && item->item) {
+            m_currentRoutes << item;
+            m_pageStack->addItem(item->item);
         }
     }
     auto context = qmlContext(this);
-    auto component = routesValueForKey(route.name);
+    auto component = routesValueForKey(route->name);
     auto createAndPush = [component, context, route, this]() {
         // We use beginCreate and completeCreate to allow
         // for a PageRouterAttached to find its parent
         // on construction time.
         auto item = component->beginCreate(context);
         item->setParent(this);
-        auto clone = route;
-        clone.item = item;
-        clone.cache = routesCacheForKey(route.name);
-        m_currentRoutes << clone;
-        if (routesCacheForKey(route.name)) {
-            m_cachedRoutes << clone;
+        auto qqItem = qobject_cast<QQuickItem*>(item);
+        if (!qqItem) {
+            qCritical() << "Route" << route->name << "is not an item! This is undefined behaviour and will likely crash your application.";
         }
+        route->item = qqItem;
+        route->cache = routesCacheForKey(route->name);
+        m_currentRoutes << route;
         auto attached = qobject_cast<PageRouterAttached*>(qmlAttachedPropertiesObject<PageRouter>(item, true));
         attached->m_router = this;
         component->completeCreate();
-        m_pageStack->addItem(qobject_cast<QQuickItem*>(item));
+        m_pageStack->addItem(qqItem);
         m_pageStack->setCurrentIndex(m_currentRoutes.length()-1);
     };
 
@@ -217,7 +223,7 @@ void PageRouter::setInitialRoute(QJSValue value)
 void PageRouter::navigateToRoute(QJSValue route)
 {
     auto incomingRoutes = parseRoutes(route);
-    QList<ParsedRoute> resolvedRoutes;
+    QList<ParsedRoute*> resolvedRoutes;
 
     if (incomingRoutes.length() <= m_currentRoutes.length()) {
         resolvedRoutes = m_currentRoutes.mid(0, incomingRoutes.length());
@@ -229,18 +235,18 @@ void PageRouter::navigateToRoute(QJSValue route)
     for (int i = 0; i < incomingRoutes.length(); i++) {
         auto current = resolvedRoutes.value(i);
         auto incoming = incomingRoutes.at(i);
+        Q_ASSERT(current);
+        Q_ASSERT(incoming);
         if (i >= resolvedRoutes.length()) {
             resolvedRoutes.append(incoming);
-        } else if (current.name != incoming.name || current.data != incoming.data) {
+        } else if (current->name != incoming->name || current->data != incoming->data) {
             resolvedRoutes.replace(i, incoming);
         }
     }
 
     for (auto route : m_currentRoutes) {
         if (!resolvedRoutes.contains(route)) {
-            if (!route.cache) {
-                route.item->deleteLater();
-            }
+            placeInCache(route);
         }
     }
 
@@ -261,13 +267,13 @@ void PageRouter::bringToView(QJSValue route)
         auto parsed = parseRoute(route);
         auto index = 0;
         for (auto currentRoute : m_currentRoutes) {
-            if (currentRoute.name == parsed.name && currentRoute.data == parsed.data) {
+            if (currentRoute->name == parsed->name && currentRoute->data == parsed->data) {
                 m_pageStack->setCurrentIndex(index);
                 return;
             }
             index++;
         }
-        qWarning() << "Route" << parsed.name << "with data" << parsed.data << "is not on the current stack of routes.";
+        qWarning() << "Route" << parsed->name << "with data" << parsed->data << "is not on the current stack of routes.";
     }
 }
 
@@ -278,11 +284,11 @@ bool PageRouter::routeActive(QJSValue route)
         return false;
     }
     for (int i = 0; i < parsed.length(); i++) {
-        if (parsed[i].name != m_currentRoutes[i].name) {
+        if (parsed[i]->name != m_currentRoutes[i]->name) {
             return false;
         }
-        if (parsed[i].data.isValid()) {
-            if (parsed[i].data != m_currentRoutes[i].data) {
+        if (parsed[i]->data.isValid()) {
+            if (parsed[i]->data != m_currentRoutes[i]->data) {
                 return false;
             }
         }
@@ -298,10 +304,8 @@ void PageRouter::pushRoute(QJSValue route)
 
 void PageRouter::popRoute()
 {
-    m_pageStack->pop(qobject_cast<QQuickItem*>(m_currentRoutes.last().item));
-    if (!m_currentRoutes.last().cache) {
-        m_currentRoutes.last().item->deleteLater();
-    }
+    m_pageStack->pop(m_currentRoutes.last()->item);
+    placeInCache(m_currentRoutes.last());
     m_currentRoutes.removeLast();
     Q_EMIT navigationChanged();
 }
@@ -311,8 +315,8 @@ QVariant PageRouter::dataFor(QObject *object)
     auto pointer = object;
     while (pointer != nullptr) {
         for (auto route : m_currentRoutes) {
-            if (route.item == pointer) {
-                return route.data;
+            if (route->item == pointer) {
+                return route->data;
             }
         }
         pointer = pointer->parent();
@@ -326,7 +330,7 @@ bool PageRouter::isActive(QObject *object)
     while (pointer != nullptr) {
         auto index = 0;
         for (auto route : m_currentRoutes) {
-            if (route.item == pointer) {
+            if (route->item == pointer) {
                 return m_pageStack->currentIndex() == index;
             }
             index++;
@@ -509,6 +513,18 @@ void PageRouterAttached::popFromHere()
     }
 }
 
+void PageRouter::placeInCache(ParsedRoute *route)
+{
+    Q_ASSERT(route);
+    if (!route->cache) {
+        delete route;
+        return;
+    }
+    auto string = route->name;
+    auto hash = route->hash();
+    m_cache.insert(qMakePair(string, hash), route);
+}
+
 void PageRouter::pushFromObject(QObject *object, QJSValue inputRoute)
 {
     auto parsed = parseRoutes(inputRoute);
@@ -518,14 +534,12 @@ void PageRouter::pushFromObject(QObject *object, QJSValue inputRoute)
         bool popping = false;
         for (auto route : m_currentRoutes) {
             if (popping) {
-                if (!route.cache) {
-                    m_currentRoutes.removeAll(route);
-                    route.item->deleteLater();
-                }
+                m_currentRoutes.removeAll(route);
+                placeInCache(route);
                 continue;
             }
-            if (route.item == obj) {
-                m_pageStack->pop(qobject_cast<QQuickItem*>(route.item));
+            if (route->item == obj) {
+                m_pageStack->pop(route->item);
                 popping = true;
             }
         }
@@ -548,8 +562,8 @@ QJSValue PageRouter::currentRoutes() const
     auto ret = engine->newArray(m_currentRoutes.length());
     for (int i = 0; i < m_currentRoutes.length(); ++i) {
         auto object = engine->newObject();
-        object.setProperty(QStringLiteral("route"), m_currentRoutes[i].name);
-        object.setProperty(QStringLiteral("data"), engine->toScriptValue(m_currentRoutes[i].data));
+        object.setProperty(QStringLiteral("route"), m_currentRoutes[i]->name);
+        object.setProperty(QStringLiteral("data"), engine->toScriptValue(m_currentRoutes[i]->data));
         ret.setProperty(i, object);
     }
     return ret;

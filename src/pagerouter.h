@@ -6,14 +6,37 @@
 
 #pragma once
 
+#include <QCache>
 #include <QQuickItem>
+#include <QRandomGenerator>
 #include "columnview.h"
+
+static std::map<quint32,QVariant> s_knownVariants;
 
 struct ParsedRoute {
     QString name;
     QVariant data;
     bool cache;
-    QObject* item;
+    QPointer<QQuickItem> item;
+    ParsedRoute(const ParsedRoute&) = delete;
+    ~ParsedRoute() {
+        if (item) {
+            item->deleteLater();
+        }
+    }
+    quint32 hash() {
+        for (auto i = s_knownVariants.begin(); i != s_knownVariants.end(); i++) {
+            if (i->second == data) {
+                return i->first;
+            }
+        }
+        auto number = QRandomGenerator::system()->generate();
+        while (s_knownVariants.count(number) > 0) {
+            number = QRandomGenerator::system()->generate();
+        }
+        s_knownVariants[number] = data;
+        return number;
+    }
     bool operator==(const ParsedRoute& rhs)
     {
         return name == rhs.name && data == rhs.data && item == rhs.item && cache == rhs.cache;
@@ -69,17 +92,28 @@ class PageRoute : public QObject
      */
     Q_PROPERTY(bool cache MEMBER m_cache READ cache)
 
+    /**
+     * @brief How expensive this route is on resources.
+     *
+     * This will influence how long and how many pages from this
+     * route will be kept in the PageRouter's cache.
+     *
+     */
+    Q_PROPERTY(int cost MEMBER m_cost READ cost)
+
     Q_CLASSINFO("DefaultProperty", "component")
 
 private:
     QString m_name;
     QQmlComponent* m_component;
     bool m_cache = false;
+    int m_cost = 1;
 
 public:
     QQmlComponent* component() { return m_component; };
     QString name() { return m_name; };
     bool cache() { return m_cache; };
+    int cost() { return m_cost; };
 };
 
 class PageRouterAttached;
@@ -214,14 +248,14 @@ private:
      * should be kept in sync. Undesirable behaviour will result
      * from desynchronisation of the two.
      */
-    QList<ParsedRoute> m_currentRoutes;
+    QList<ParsedRoute*> m_currentRoutes;
 
     /**
      * @brief Cached routes.
      * 
      * A list of ParsedRoutes with instantiated items.
      */
-    QList<ParsedRoute> m_cachedRoutes;
+    QMap<QPair<QString,quint32>,ParsedRoute*> m_cache;
 
     /**
      * @brief Helper function to push a route.
@@ -229,7 +263,7 @@ private:
      * This function has the shared logic between
      * navigateToRoute and pushRoute.
      */
-    void push(ParsedRoute route);
+    void push(ParsedRoute* route);
 
     /**
      * @brief Helper function to access whether m_routes has a key.
@@ -247,12 +281,19 @@ private:
     QQmlComponent *routesValueForKey(const QString &key);
 
     /**
+     * @brief Helper function to get the cost of a route.
+     */
+    int routesCostForKey(const QString &key);
+
+    /**
      * @brief Helper function to access the cache status of a key for m_routes.
      * 
      * The return value will be false if @p key does not exist in
      * m_routes.
      */
     bool routesCacheForKey(const QString &key);
+
+    void placeInCache(ParsedRoute *route);
 
     static void appendRoute(QQmlListProperty<PageRoute>* list, PageRoute*);
     static int routeCount(QQmlListProperty<PageRoute>* list);
