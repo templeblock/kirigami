@@ -42,18 +42,30 @@ QObject *BasicThemeDeclarative::instance(const BasicTheme *theme)
     }
 
     QQmlEngine *engine = qmlEngine(theme->parent());
+    if (!engine) {
+        // FIXME: is it always true that 
+        if (theme->parent()->parent()) {
+            engine = qmlEngine(theme->parent()->parent());
+        }
+    }
     Q_ASSERT(engine);
 
-    QQmlComponent c(engine, m_url);
-    //NOTE: for now is important this import stays at 2.0
-   /* c.setData("import QtQuick 2.6\n\
-            import org.kde.kirigami 2.0 as Kirigami\n\
-            QtObject {\n\
-                property QtObject theme: Kirigami.Theme\n\
-            }", QUrl(QStringLiteral("basictheme.cpp")));
-*/
-    QObject *obj = c.create();
-    m_declarativeBasicTheme = obj;//->property("theme").value<QObject *>();
+    if (m_url.isEmpty()) {
+        QQmlComponent c(engine);
+        //NOTE: is important this import stays at 2.0
+        c.setData("import QtQuick 2.6\n\
+                import org.kde.kirigami 2.0 as Kirigami\n\
+                QtObject {\n\
+                    property QtObject theme: Kirigami.Theme\n\
+                }", QUrl(QStringLiteral("basictheme.cpp")));
+qWarning()<<c.errors();
+        QObject *obj = c.create();
+        m_declarativeBasicTheme = obj->property("theme").value<QObject *>();
+    } else {
+        QQmlComponent c(engine, m_url);
+        QObject *obj = c.create();
+        m_declarativeBasicTheme = obj;
+    }
 
     return m_declarativeBasicTheme;
 }
@@ -336,6 +348,12 @@ QColor BasicTheme::viewFocusColor() const
 BasicThemeDeclarative *BasicTheme::basicThemeDeclarative()
 {
     QQmlEngine *engine = qmlEngine(parent());
+    if (!engine) {
+        // FIXME: is it always true that 
+        if (parent()->parent()) {
+            engine = qmlEngine(parent()->parent());
+        }
+    }
 
     if (!s_declarativeThemes.contains(engine)) {
         s_declarativeThemes[engine] = new BasicThemeDeclarative(engine, componentUrl(QStringLiteral("Theme.qml")));
@@ -371,6 +389,13 @@ QString BasicTheme::resolveFileUrl(const QString &filePath) const
 QUrl BasicTheme::componentUrl(const QString &fileName) const
 {
     QQmlEngine *engine = qmlEngine(parent());
+    if (!engine) {
+        // FIXME: is it always true that 
+        if (parent()->parent()) {
+            engine = qmlEngine(parent()->parent());
+        }
+    }
+
     if (!engine) {
         return QUrl();
     }
