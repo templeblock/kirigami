@@ -20,7 +20,7 @@ class BasicTheme;
 class BasicThemeDeclarative
 {
 public:
-    BasicThemeDeclarative();
+    BasicThemeDeclarative(QQmlEngine *engine, const QUrl &url);
     virtual ~BasicThemeDeclarative();
 
     QObject *instance(const BasicTheme *theme);
@@ -28,7 +28,8 @@ public:
     QTimer *m_colorSyncTimer;
 
 private:
-    QUrl m_qmlPath;
+    QQmlEngine *m_engine;
+    QUrl m_url;
     //The instance can die when and if the engine dies
     QPointer<QObject> m_declarativeBasicTheme;
 };
@@ -64,13 +65,20 @@ public:
     QColor viewHoverColor() const;
     QColor viewFocusColor() const;
 
-    static BasicThemeDeclarative *basicThemeDeclarative();
+    BasicThemeDeclarative *basicThemeDeclarative();
 
 Q_SIGNALS:
     void colorsChanged();
 
 private:
     inline void syncCustomColorsToQML();
+
+    QString resolveFilePath(const QString &path) const;
+    QString resolveFileUrl(const QString &filePath) const;
+    QUrl componentUrl(const QString &fileName) const;
+
+    static QHash <QQmlEngine *, BasicThemeDeclarative*> s_declarativeThemes;
+
     //legacy colors
     QColor m_buttonTextColor;
     QColor m_buttonBackgroundColor;

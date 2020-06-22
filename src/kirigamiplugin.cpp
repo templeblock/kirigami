@@ -111,6 +111,8 @@ void KirigamiPlugin::registerTypes(const char *uri)
         QIcon::setThemeName(QStringLiteral("breeze-internal"));
     }
 
+    Kirigami::PlatformTheme::setBaseUrl(baseUrl());
+
 #if !defined(Q_OS_ANDROID) && !defined(Q_OS_IOS)
     //org.kde.desktop.plasma is a couple of files that fall back to desktop by purpose
     if ((style.isEmpty() || style == QStringLiteral("org.kde.desktop.plasma")) && QFile::exists(resolveFilePath(QStringLiteral("/styles/org.kde.desktop")))) {

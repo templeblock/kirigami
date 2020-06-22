@@ -11,22 +11,16 @@
 #include <QPalette>
 #include <QDebug>
 #include <QQuickWindow>
+#include <QQuickStyle>
 #include <QTimer>
 
 namespace Kirigami {
 
-class BasicThemeDeclarativeSingleton
-{
-public:
-    BasicThemeDeclarativeSingleton()
-    {}
+QHash <QQmlEngine *, BasicThemeDeclarative *> BasicTheme::s_declarativeThemes = QHash <QQmlEngine *, BasicThemeDeclarative *>();
 
-    BasicThemeDeclarative self;
-};
-
-Q_GLOBAL_STATIC(BasicThemeDeclarativeSingleton, privateBasicThemeDeclarativeSelf)
-
-BasicThemeDeclarative::BasicThemeDeclarative()
+BasicThemeDeclarative::BasicThemeDeclarative(QQmlEngine *engine, const QUrl &url)
+    : m_engine(engine),
+      m_url(url)
 {
     m_colorSyncTimer = new QTimer;
     m_colorSyncTimer->setInterval(0);
@@ -50,16 +44,16 @@ QObject *BasicThemeDeclarative::instance(const BasicTheme *theme)
     QQmlEngine *engine = qmlEngine(theme->parent());
     Q_ASSERT(engine);
 
-    QQmlComponent c(engine);
+    QQmlComponent c(engine, m_url);
     //NOTE: for now is important this import stays at 2.0
-    c.setData("import QtQuick 2.6\n\
+   /* c.setData("import QtQuick 2.6\n\
             import org.kde.kirigami 2.0 as Kirigami\n\
             QtObject {\n\
                 property QtObject theme: Kirigami.Theme\n\
             }", QUrl(QStringLiteral("basictheme.cpp")));
-
+*/
     QObject *obj = c.create();
-    m_declarativeBasicTheme = obj->property("theme").value<QObject *>();
+    m_declarativeBasicTheme = obj;//->property("theme").value<QObject *>();
 
     return m_declarativeBasicTheme;
 }
@@ -341,7 +335,63 @@ QColor BasicTheme::viewFocusColor() const
 
 BasicThemeDeclarative *BasicTheme::basicThemeDeclarative()
 {
-    return &privateBasicThemeDeclarativeSelf->self;
+    QQmlEngine *engine = qmlEngine(parent());
+
+    if (!s_declarativeThemes.contains(engine)) {
+        s_declarativeThemes[engine] = new BasicThemeDeclarative(engine, componentUrl(QStringLiteral("Theme.qml")));
+    }
+
+    return s_declarativeThemes[engine];
+}
+
+
+//FIXME too much copypasta
+QString BasicTheme::resolveFilePath(const QString &path) const
+{
+#if defined(Q_OS_ANDROID) && QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+    return QStringLiteral(":/android_rcc_bundle/qml/org/kde/kirigami.2/") + path;
+#elif defined(KIRIGAMI_BUILD_TYPE_STATIC)
+    return QStringLiteral(":/org/kde/kirigami/") + path;
+#else
+    return baseUrl().toLocalFile() + QLatin1Char('/') + path;
+#endif
+}
+
+QString BasicTheme::resolveFileUrl(const QString &filePath) const
+{
+#if defined(Q_OS_ANDROID) && QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+    return QStringLiteral("qrc:/android_rcc_bundle/qml/org/kde/kirigami.2/") + filePath;
+#elif defined(KIRIGAMI_BUILD_TYPE_STATIC)
+    return filePath;
+#else
+    return baseUrl().toString() + QLatin1Char('/') + filePath;
+#endif
+}
+
+QUrl BasicTheme::componentUrl(const QString &fileName) const
+{
+    QQmlEngine *engine = qmlEngine(parent());
+    if (!engine) {
+        return QUrl();
+    }
+    QStringList stylesFallbackChain = {engine->property("__kirigamiTheme").toString(), QQuickStyle::name()};
+
+    for (const QString &style : qAsConst(stylesFallbackChain)) {
+        const QString candidate = QStringLiteral("styles/") + style + QLatin1Char('/') + fileName;
+        if (QFile::exists(resolveFilePath(candidate))) {
+#ifdef KIRIGAMI_BUILD_TYPE_STATIC
+            return QUrl(QStringLiteral("qrc:/org/kde/kirigami/styles/") + style + QLatin1Char('/') + fileName);
+#else
+            return QUrl(resolveFileUrl(candidate));
+#endif
+        }
+    }
+
+#ifdef KIRIGAMI_BUILD_TYPE_STATIC
+            return QUrl(QStringLiteral("qrc:/org/kde/kirigami/") + fileName);
+#else
+    return QUrl(resolveFileUrl(fileName));
+#endif
 }
 
 }

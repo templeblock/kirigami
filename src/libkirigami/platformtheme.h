@@ -272,6 +272,10 @@ public:
     //QML attached property
     static PlatformTheme *qmlAttachedProperties(QObject *object);
 
+    //not for QML, used by the engine, the theme needs to know kirigami's base url
+    static void setBaseUrl(const QUrl &baseUrl);
+    static QUrl baseUrl();
+    
 Q_SIGNALS:
     //TODO: parameters to signals as this is also a c++ api
     void colorsChanged();

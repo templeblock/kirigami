@@ -29,7 +29,6 @@ public:
     void findParentStyle();
     static QColor tint(const QColor &c1, const QColor &c2, qreal ratio);
 
-
     PlatformTheme *q;
     PlatformTheme::ColorSet m_colorSet = PlatformTheme::Window;
     PlatformTheme::ColorGroup m_colorGroup = PlatformTheme::Active;
@@ -91,15 +90,19 @@ public:
     QFont font;
     QFont smallFont;
 
+    static QUrl s_baseUrl;
+
     bool m_inherit = true;
     bool m_init = true;
     bool m_supportsIconColoring = false;
     bool m_pendingColorChange = false;
 
-    static KirigamiPluginFactory *s_pluginFactory;
+    static QHash<QString, KirigamiPluginFactory *>s_pluginFactory;
 };
 
-KirigamiPluginFactory *PlatformThemePrivate::s_pluginFactory = nullptr;
+QHash<QString, KirigamiPluginFactory *> PlatformThemePrivate::s_pluginFactory = QHash<QString, KirigamiPluginFactory *>();
+
+QUrl PlatformThemePrivate::s_baseUrl = QUrl();
 
 PlatformThemePrivate::PlatformThemePrivate(PlatformTheme *q)
     : q(q)
@@ -115,6 +118,16 @@ void setPaletteColor(QPalette& customPalette, QPalette::ColorGroup cg, QPalette:
         *changed = true;
         customPalette.setColor(cg, cr, color);
     }
+}
+
+void PlatformTheme::setBaseUrl(const QUrl &baseUrl)
+{
+    PlatformThemePrivate::s_baseUrl = baseUrl;
+}
+
+QUrl PlatformTheme::baseUrl()
+{
+    return PlatformThemePrivate::s_baseUrl;
 }
 
 void PlatformThemePrivate::syncCustomPalette()
@@ -893,14 +906,25 @@ void PlatformTheme::setSupportsIconColoring(bool support)
     d->m_supportsIconColoring = support;
 }
 
-
 PlatformTheme *PlatformTheme::qmlAttachedProperties(QObject *object)
 {
     static bool s_factoryChecked = false;
 
+    QString styleName;
+
+    QQmlEngine *engine = qmlEngine(object);
+    if (engine) {
+        styleName = engine->property("__kirigamiTheme").toString();
+        if (styleName.isEmpty()) {
+            styleName = QQuickStyle::name();
+        }
+    }
+
+    KirigamiPluginFactory *factory = PlatformThemePrivate::s_pluginFactory.value(QQuickStyle::name());
+
     //check for the plugin only once: it's an heavy operation
-    if (PlatformThemePrivate::s_pluginFactory) {
-        return PlatformThemePrivate::s_pluginFactory->createPlatformTheme(object);
+    if (factory) {
+        return factory->createPlatformTheme(object);
     } else if (!s_factoryChecked) {
         s_factoryChecked = true;
 
@@ -908,7 +932,7 @@ PlatformTheme *PlatformTheme::qmlAttachedProperties(QObject *object)
         for (QObject* staticPlugin : QPluginLoader::staticInstances()) {
             KirigamiPluginFactory *factory = qobject_cast<KirigamiPluginFactory *>(staticPlugin);
             if (factory) {
-                PlatformThemePrivate::s_pluginFactory = factory;
+                PlatformThemePrivate::s_pluginFactory[QQuickStyle::name()] = factory;
                 return factory->createPlatformTheme(object);
             }
         }
@@ -926,7 +950,7 @@ PlatformTheme *PlatformTheme::qmlAttachedProperties(QObject *object)
 
                     KirigamiPluginFactory *factory = qobject_cast<KirigamiPluginFactory *>(plugin);
                     if (factory) {
-                        PlatformThemePrivate::s_pluginFactory = factory;
+                        PlatformThemePrivate::s_pluginFactory[QQuickStyle::name()] = factory;
                         return factory->createPlatformTheme(object);
                     }
                 }
